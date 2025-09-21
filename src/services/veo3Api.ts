@@ -1,10 +1,18 @@
-import { GenerationSettings } from './types';
+import { GenerationSettings } from '../types';
 
 interface AuthCredentials {
   projectId: string;
   location: string;
   accessToken: string;
 }
+
+type GenerateContentRequest = {
+  contents: Array<{
+    role: string;
+    parts: Array<Record<string, unknown>>;
+  }>;
+  generationConfig: Record<string, unknown>;
+};
 
 let authCredentials: AuthCredentials | null = null;
 
@@ -34,17 +42,31 @@ export const isApiConfigured = (): boolean => {
 }
 
 // Function to list available models
+const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+
+const buildUrl = (path: string, apiKey: string) => {
+  const separator = path.includes('?') ? '&' : '?';
+  return `${BASE_URL}/${path}${separator}key=${encodeURIComponent(apiKey)}`;
+};
+
+const appendApiKeyToUrl = (url: string, apiKey: string) => {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set('key', apiKey);
+    return parsed.toString();
+  } catch (error) {
+    return url;
+  }
+};
+
 export const listAvailableModels = async () => {
   const auth = getAuthCredentials();
   if (!auth) {
     throw new Error('Authentication credentials are not set.');
   }
 
-  const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models', {
+  const response = await fetch(buildUrl('models', auth.accessToken), {
     method: 'GET',
-    headers: {
-      'x-goog-api-key': auth.accessToken,
-    },
   });
 
   if (!response.ok) {
@@ -91,17 +113,34 @@ export const generateVideo = async (prompt: string, settings: GenerationSettings
 
   while (retryCount <= maxRetries) {
     try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:predictLongRunning`, {
+      const requestBody: GenerateContentRequest = {
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                text: enhancedPrompt,
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          responseModalities: ['VIDEO'],
+        },
+      };
+
+      if (settings.aspectRatio) {
+        requestBody.generationConfig.videoConfig = {
+          aspectRatio: settings.aspectRatio,
+        };
+      }
+
+      const response = await fetch(buildUrl(`models/${model}:generateContent`, auth.accessToken), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-goog-api-key': auth.accessToken,
         },
-        body: JSON.stringify({
-          instances: [{
-            prompt: enhancedPrompt
-          }]
-        }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
@@ -154,11 +193,8 @@ export const pollVideoGeneration = async (operationName: string) => {
     throw new Error('Authentication credentials are not set.');
   }
 
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/${operationName}`, {
+  const response = await fetch(buildUrl(operationName, auth.accessToken), {
     method: 'GET',
-    headers: {
-      'x-goog-api-key': auth.accessToken,
-    },
   });
 
   if (!response.ok) {
@@ -189,7 +225,7 @@ export const downloadVideo = async (videoUri: string) => {
 
   // If it's a Google Cloud Storage URL, we might need to add the API key
   if (videoUri.includes('generativelanguage.googleapis.com') || videoUri.includes('storage.googleapis.com')) {
-    headers['x-goog-api-key'] = auth.accessToken;
+    fetchUrl = appendApiKeyToUrl(fetchUrl, auth.accessToken);
   }
 
   const response = await fetch(fetchUrl, {
@@ -220,12 +256,11 @@ export const downloadVideo = async (videoUri: string) => {
 
 // Function to extend an existing video with proper visual continuity
 export const extendVideo = async (
-  originalPrompt: string, 
-  extensionPrompt: string, 
-  direction: 'before' | 'after', 
+  originalPrompt: string,
+  extensionPrompt: string,
+  direction: 'before' | 'after',
   settings: GenerationSettings,
-  referenceImageBase64?: string,
-  originalVideoUrl?: string
+  referenceImageBase64?: string
 ) => {
   const auth = getAuthCredentials();
   if (!auth) {
@@ -261,23 +296,41 @@ export const extendVideo = async (
     enhancedPrompt = `Ultrawide (21:9) ${enhancedPrompt}`;
   }
 
-  // Prepare the request body
-  const requestBody: any = {
-    instances: [{
-      prompt: enhancedPrompt
-    }]
+  const requestBody: GenerateContentRequest = {
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            text: enhancedPrompt,
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      responseModalities: ['VIDEO'],
+    },
   };
 
-  // Add reference image if provided (for after extensions)
   if (referenceImageBase64 && direction === 'after') {
-    requestBody.instances[0].image = referenceImageBase64;
+    requestBody.contents[0].parts.push({
+      inlineData: {
+        mimeType: 'image/png',
+        data: referenceImageBase64,
+      },
+    });
   }
 
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:predict`, {
+  if (settings.aspectRatio) {
+    requestBody.generationConfig.videoConfig = {
+      aspectRatio: settings.aspectRatio,
+    };
+  }
+
+  const response = await fetch(buildUrl(`models/${model}:generateContent`, auth.accessToken), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-goog-api-key': auth.accessToken,
     },
     body: JSON.stringify(requestBody),
   });
