@@ -113,6 +113,16 @@ export const generateVideo = async (prompt: string, settings: GenerationSettings
 
   while (retryCount <= maxRetries) {
     try {
+      const generationConfig: Record<string, unknown> = {
+        responseMimeType: 'video/mp4',
+      };
+
+      if (settings.aspectRatio) {
+        generationConfig.video = {
+          aspectRatio: settings.aspectRatio,
+        };
+      }
+
       const requestBody: GenerateContentRequest = {
         contents: [
           {
@@ -124,16 +134,8 @@ export const generateVideo = async (prompt: string, settings: GenerationSettings
             ],
           },
         ],
-        generationConfig: {
-          responseModalities: ['VIDEO'],
-        },
+        generationConfig,
       };
-
-      if (settings.aspectRatio) {
-        requestBody.generationConfig.videoConfig = {
-          aspectRatio: settings.aspectRatio,
-        };
-      }
 
       const response = await fetch(buildUrl(`models/${model}:generateContent`, auth.accessToken), {
         method: 'POST',
@@ -296,24 +298,18 @@ export const extendVideo = async (
     enhancedPrompt = `Ultrawide (21:9) ${enhancedPrompt}`;
   }
 
-  const requestBody: GenerateContentRequest = {
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          {
-            text: enhancedPrompt,
-          },
-        ],
-      },
-    ],
-    generationConfig: {
-      responseModalities: ['VIDEO'],
-    },
+  const generationConfig: Record<string, unknown> = {
+    responseMimeType: 'video/mp4',
   };
 
+  const parts: Array<Record<string, unknown>> = [
+    {
+      text: enhancedPrompt,
+    },
+  ];
+
   if (referenceImageBase64 && direction === 'after') {
-    requestBody.contents[0].parts.push({
+    parts.push({
       inlineData: {
         mimeType: 'image/png',
         data: referenceImageBase64,
@@ -322,10 +318,20 @@ export const extendVideo = async (
   }
 
   if (settings.aspectRatio) {
-    requestBody.generationConfig.videoConfig = {
+    generationConfig.video = {
       aspectRatio: settings.aspectRatio,
     };
   }
+
+  const requestBody: GenerateContentRequest = {
+    contents: [
+      {
+        role: 'user',
+        parts,
+      },
+    ],
+    generationConfig,
+  };
 
   const response = await fetch(buildUrl(`models/${model}:generateContent`, auth.accessToken), {
     method: 'POST',
